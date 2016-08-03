@@ -27,30 +27,29 @@ import (
 
 // KubernetesClient is an object that performs the nanny's requisite interactions with Kubernetes.
 type KubernetesClient interface {
-	CountNodes() (uint64, uint64, error)
-	PodReplicas() (uint64, error)
-	UpdateReplicas(uint64) error
-	GetParentRc(namespace, podname string) (string, error)
+	CountNodes() (int32, int32, int32, int32, error)
+	PodReplicas() (int32, error)
+	UpdateReplicas(int32) error
+	GetParents(namespace, podname string) (string, string, string, error)
 }
 
 // PollAPIServer periodically counts the number of nodes, estimates the expected
 // number of replicas, compares them to the actual replicas, and
 // updates the parent ReplicationController with the expected replicas if necessary.
-func PollAPIServer(k8s KubernetesClient, scaler Scaler, pollPeriod time.Duration, verbose bool) {
+func PollAPIServer(k8s KubernetesClient, scaler Scaler, pollPeriod time.Duration, configMap string, verbose bool) {
 	for i := 0; true; i++ {
 		if i != 0 {
 			// Sleep for the poll period.
 			time.Sleep(pollPeriod)
 		}
 
-		// Query the apiserver for the number of nodes.
-		total, num, err := k8s.CountNodes()
+		// Query the apiserver for the number of nodes and cores
+		total, schedulableNodes, totalCores, schedulableCores, err := k8s.CountNodes()
 		if err != nil {
-			log.Println(err)
 			continue
 		}
 		if verbose {
-			log.Printf("The number of nodes is %d, schedulable nodes: %d\n", total, num)
+			log.Printf("The number of nodes is %d, schedulable nodes: %d\n", total, schedulableNodes)
 		}
 
 		// Query the apiserver for this pod's information.
@@ -63,8 +62,12 @@ func PollAPIServer(k8s KubernetesClient, scaler Scaler, pollPeriod time.Duration
 			log.Printf("There are %d pod replicas\n", replicas)
 		}
 
-		// Get the expected resourcereplicas
-		expReplicas := scaler.scaleWithNodes(num)
+		params, err := scaler.FetchAndParseConfigMap(k8s, configMap)
+		if err != nil {
+			continue
+		}
+		// Get the expected replicas for the currently schedulable nodes and cores
+		expReplicas := scaler.scaleWithNodesAndCores(params, schedulableNodes, schedulableCores)
 		if verbose {
 			log.Printf("The expected number of replicas is %d\n", expReplicas)
 		}

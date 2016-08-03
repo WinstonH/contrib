@@ -17,24 +17,18 @@ limitations under the License.
 package nanny
 
 import (
-	"bufio"
-	"fmt"
 	"log"
-	"os"
 	"sort"
-	"strconv"
-	"strings"
 )
 
 // Scaler determines the number of replicas to run
 type Scaler struct {
-	ConfigFile string
-	Verbose    bool
+	ConfigMap string
+	Verbose   bool
 }
 
-const paramsSeparator = "nodes.gte."
+func (s Scaler) scaleWithNodesAndCores(numCurrentNodes, schedulableCores int32) int32 {
 
-func (s Scaler) scaleWithNodes(numCurrentNodes uint64) uint64 {
 	newMap, err := ParseScalerParamsFile(s.ConfigFile)
 	if err != nil {
 		log.Fatalf("Parse failure: The configmap volume file is malformed (%s)\n", err)
@@ -46,61 +40,21 @@ func (s Scaler) scaleWithNodes(numCurrentNodes uint64) uint64 {
 		keys = append(keys, int(k))
 	}
 	sort.Ints(keys)
-	var neededReplicas uint64 = 1
+	var neededReplicas int32 = 1
 
 	// Walk the search ladder to get the correct number of replicas
-	// for the current number of nodes
-	for _, nodeCount := range keys {
-		replicas := newMap[uint64(nodeCount)]
-		if uint64(nodeCount) > numCurrentNodes {
+	// for the current number of cores
+	for _, coreCount := range keys {
+		replicas := newMap[int32(coreCount)]
+		if int32(coreCount) > schedulableCores {
 			break
 		}
 		neededReplicas = replicas
 	}
+	// Minimum of two replicas if there are atleast 2 schedulable nodes
+	if numCurrentNodes > 1 && neededReplicas < 2 {
+		neededReplicas = 2
+	}
+
 	return neededReplicas
-}
-
-// ParseScalerParamsFile Parse the scaler params file every time around, since it is a ConfigMap volume.
-func ParseScalerParamsFile(filename string) (map[uint64]uint64, error) {
-	NodeToReplicasMap := make(map[uint64]uint64)
-	if _, err := os.Stat(filename); err != nil {
-		if os.IsNotExist(err) {
-			return nil, fmt.Errorf("Params file %s does not exist", filename)
-		}
-		return nil, fmt.Errorf("Params file %s is not readable", filename)
-	}
-
-	f, err := os.Open(filename)
-	if err != nil {
-		return nil, err
-	}
-	defer f.Close()
-	scanner := bufio.NewScanner(f)
-	var n = 1
-	for scanner.Scan() {
-		l := scanner.Text()
-		// Each line should be of the form nodes.gte.<N>=<M>
-		parts := strings.Split(l, "=")
-		if len(parts) < 2 {
-			return nil, fmt.Errorf("Error parsing line %d in params file %s", n, filename)
-		}
-		tokens := strings.Split(parts[0], paramsSeparator)
-		if len(tokens) < 2 {
-			return nil, fmt.Errorf("Error parsing line %d in params file %s", n, filename)
-		}
-		node, err := strconv.ParseUint(tokens[1], 10, 64)
-		if err != nil {
-			return nil, fmt.Errorf("Error parsing line %d in params file %s", n, filename)
-		}
-		desiredReplicaCount, err := strconv.ParseUint(parts[1], 10, 64)
-		if err != nil {
-			return nil, fmt.Errorf("Error parsing line %d in params file %s", n, filename)
-		}
-		NodeToReplicasMap[node] = desiredReplicaCount
-		n++
-	}
-	if err = scanner.Err(); err != nil {
-		return nil, fmt.Errorf("Error %s reading params file", err)
-	}
-	return NodeToReplicasMap, nil
 }

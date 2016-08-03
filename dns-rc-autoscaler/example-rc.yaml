@@ -2,7 +2,7 @@ kind: ConfigMap
 apiVersion: v1
 metadata:
   name: pod-autoscaler-nanny-params
-  namespace: kube-system
+  namespace: default
 data:
   params.conf: |-
     nodes.gte.1=1
@@ -37,10 +37,6 @@ spec:
         k8s-app: pod-autoscaler-nanny
         version: v1
     spec:
-      volumes:
-        - name: config-volume
-          configMap:
-            name: pod-autoscaler-nanny-params
       containers:
         - image: gcr.io/google_containers/dns-rc-autoscaler:0.5
           imagePullPolicy: Always
@@ -52,9 +48,6 @@ spec:
             requests:
               cpu: 10m
               memory: 30Mi
-          volumeMounts:
-            - name: config-volume
-              mountPath: /etc/pod_nanny
           env:
             - name: MY_POD_NAME
               valueFrom:
@@ -66,8 +59,6 @@ spec:
                   fieldPath: metadata.namespace
           command:
             - /dns_pod_nanny
-            - --paramsFile
-            - /etc/pod_nanny/params.conf
             - --verbose
-
-
+            - --configmap
+            - pod-autoscaler-nanny-params
